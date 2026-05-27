@@ -14,7 +14,7 @@ async def start_handler(_, message: Message):
 async def start_server():
     await bot.start()
     await assistant.start()
-    print("🚀 Base Bot and Assistant are running perfectly!")
+    print("🚀 Bot is online!")
     await asyncio.Event().wait()
 
 if __name__ == "__main__":
