@@ -2,82 +2,67 @@ import os
 import asyncio
 from pyrogram import Client, filters
 from pyrogram.types import Message
+from pytgcalls import PyTgCalls
+from pytgcalls.types import AudioPiped
 import yt_dlp
 import config
 
 bot = Client("MusicBot", api_id=config.API_ID, api_hash=config.API_HASH, bot_token=config.BOT_TOKEN)
+assistant = Client("Assistant", api_id=config.API_ID, api_hash=config.API_HASH, session_string=config.SESSION_NAME)
+call_py = PyTgCalls(assistant)
 
-# Modified Bypass Song Download Function
-def download_song(query):
+# Live VC Streaming Link Generator
+def get_live_link(query):
     ydl_opts = {
-        'format': 'bestaudio/best',
-        'keepvideo': False,
-        'outtmpl': 'downloads/%(title)s.%(ext)s',
-        # YouTube block bypass karne ke liye search sequence badla hai
-        'default_search': 'ytsearch',
-        'noplaylist': True,
-        'nocheckcertificate': True,
-        'geo_bypass': True,
-        # Yeh headers YouTube ko chakma dene ke liye hain
-        'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.9',
-        },
-        'postprocessors': [{
-            'key': 'FFmpegExtractAudio',
-            'preferredcodec': 'mp3',
-            'preferredquality': '192',
-        }],
+        "format": "bestaudio/best",
+        "quiet": True,
+        "default_search": "ytsearch",
+        "nocheckcertificate": True,
+        "noplaylist": True,
+        "geo_bypass": True,
     }
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(f"ytsearch:{query}", download=True)
-        if 'entries' in info:
+        info = ydl.extract_info(f"ytsearch:{query}", download=False)
+        if 'entries' in info and len(info['entries']) > 0:
             info = info['entries'][0]
-        filename = ydl.prepare_filename(info).replace(info['ext'], 'mp3')
-        return filename, info['title']
+        return info['url'], info['title']
 
-@bot.on_message(filters.command("start") & filters.private)
-async def start_handler(_, message: Message):
-    await message.reply_text("✨ **Cosmic Music Downloader Bot is Online!**\n\nGroup me `/play [song name]` likhein download karne ke liye.")
-
-@bot.on_message(filters.command("play"))
+@bot.on_message(filters.command("play") & filters.group)
 async def play_handler(_, message: Message):
     if len(message.command) < 2:
         return await message.reply_text("❌ **Usage:** `/play [song name]`")
     
     query = message.text.split(None, 1)[1]
-    m = await message.reply_text("🔎 **Searching and Downloading your song... Please wait**")
+    m = await message.reply_text("🔎 **Searching and connecting to Voice Chat...**")
     
     try:
-        # Background download thread
-        filename, title = await asyncio.to_thread(download_song, query)
+        # YouTube se stream link nikalna
+        link, title = await asyncio.to_thread(get_live_link, query)
         
-        await m.edit_text("📤 **Uploading song to Telegram...**")
-        
-        # Audio file send karna
-        await message.reply_audio(
-            audio=filename,
-            title=title,
-            caption=f"🎵 **Uploaded successfully!**\n🎧 **Requested By:** {message.from_user.mention if message.from_user else 'User'}"
+        # Assistant ko VC ke andar join karwa kar live stream chalana
+        await call_py.join_group_call(
+            message.chat.id,
+            AudioPiped(link)
         )
-        await m.delete()
-        
-        # Delete file after upload to save space
-        if os.path.exists(filename):
-            os.remove(filename)
-            
+        await m.edit_text(f"🎵 **Started Streaming on VC:** `{title}`\n\n🎧 **Requested By:** {message.from_user.mention}")
     except Exception as e:
-        # Agar fir bhi block ho, toh query link format error clear karega
-        await m.edit_text(f"❌ **Error:** YouTube temporary blocked this request. Please try another song name or retry in a group!")
+        await m.edit_text(f"❌ **VC Error:** {e}\n\n*Make sure group Voice Chat is started and Assistant is in the group!*")
+
+@bot.on_message(filters.command("stop") & filters.group)
+async def stop_handler(_, message: Message):
+    try:
+        await call_py.leave_group_call(message.chat.id)
+        await message.reply_text("⏹️ **Voice Chat streaming stopped!**")
+    except Exception as e:
+        await message.reply_text(f"❌ **Error:** {e}")
 
 async def start_server():
     await bot.start()
-    print("🚀 Cosmic Downloader Bot is fully live and active!")
+    await assistant.start()
+    await call_py.start()
+    print("🚀 VC Music Bot is Live!")
     await asyncio.Event().wait()
 
 if __name__ == "__main__":
-    if not os.path.exists("downloads"):
-        os.makedirs("downloads")
     asyncio.get_event_loop().run_until_complete(start_server())
     
