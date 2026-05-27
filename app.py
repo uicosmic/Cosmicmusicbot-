@@ -2,65 +2,72 @@ import os
 import asyncio
 from pyrogram import Client, filters
 from pyrogram.types import Message
-from pytgcalls import PyTgCalls
-from pytgcalls.types.input_stream import AudioPiped
 import yt_dlp
 import config
 
 bot = Client("MusicBot", api_id=config.API_ID, api_hash=config.API_HASH, bot_token=config.BOT_TOKEN)
-assistant = Client("Assistant", api_id=config.API_ID, api_hash=config.API_HASH, session_string=config.SESSION_NAME)
-call_py = PyTgCalls(assistant)
 
-def get_live_link(query):
+def download_song(query):
     ydl_opts = {
-        "format": "bestaudio/best",
-        "quiet": True,
-        "default_search": "ytsearch",
-        "nocheckcertificate": True,
-        "noplaylist": True,
-        "geo_bypass": True,
+        'format': 'bestaudio/best',
+        'keepvideo': False,
+        'outtmpl': 'downloads/%(title)s.%(ext)s',
+        'default_search': 'ytsearch',
+        'noplaylist': True,
+        'nocheckcertificate': True,
+        'geo_bypass': True,
+        'http_headers': {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+        },
+        'postprocessors': [{
+            'key': 'FFmpegExtractAudio',
+            'preferredcodec': 'mp3',
+            'preferredquality': '192',
+        }],
     }
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(f"ytsearch:{query}", download=False)
-        if 'entries' in info and len(info['entries']) > 0:
+        info = ydl.extract_info(f"ytsearch:{query}", download=True)
+        if 'entries' in info:
             info = info['entries'][0]
-        return info['url'], info['title']
+        filename = ydl.prepare_filename(info).replace(info['ext'], 'mp3')
+        return filename, info['title']
 
-@bot.on_message(filters.command("play") & filters.group)
+@bot.on_message(filters.command("start") & filters.private)
+async def start_handler(_, message: Message):
+    await message.reply_text("✨ **Cosmic Music Downloader Bot is Online!**\n\nGroup me `/play [song name]` likhein download karne ke liye.")
+
+@bot.on_message(filters.command("play"))
 async def play_handler(_, message: Message):
     if len(message.command) < 2:
         return await message.reply_text("❌ **Usage:** `/play [song name]`")
     
     query = message.text.split(None, 1)[1]
-    m = await message.reply_text("🔎 **Searching and connecting to VC...**")
+    m = await message.reply_text("🔎 **Searching and Downloading your song... Please wait**")
     
     try:
-        link, title = await asyncio.to_thread(get_live_link, query)
+        filename, title = await asyncio.to_thread(download_song, query)
+        await m.edit_text("📤 **Uploading song to Telegram...**")
         
-        # Legacy version compatible join syntax
-        await call_py.join_group_call(
-            message.chat.id,
-            AudioPiped(link)
+        await message.reply_audio(
+            audio=filename,
+            title=title,
+            caption=f"🎵 **Uploaded successfully!**\n🎧 **Requested By:** {message.from_user.mention if message.from_user else 'User'}"
         )
-        await m.edit_text(f"🎵 **Started Streaming on VC:** `{title}`\n\n🎧 **Requested By:** {message.from_user.mention}")
+        await m.delete()
+        
+        if os.path.exists(filename):
+            os.remove(filename)
+            
     except Exception as e:
-        await m.edit_text(f"❌ **VC Error:** {e}\n\n*Make sure group Voice Chat is started!*")
-
-@bot.on_message(filters.command("stop") & filters.group)
-async def stop_handler(_, message: Message):
-    try:
-        await call_py.leave_group_call(message.chat.id)
-        await message.reply_text("⏹️ **Voice Chat streaming stopped!**")
-    except Exception as e:
-        await message.reply_text(f"❌ **Error:** {e}")
+        await m.edit_text(f"❌ **Error:** {e}")
 
 async def start_server():
     await bot.start()
-    await assistant.start()
-    await call_py.start()
-    print("🚀 VC Music Bot is Live!")
+    print("🚀 Cosmic Downloader Bot is live!")
     await asyncio.Event().wait()
 
 if __name__ == "__main__":
+    if not os.path.exists("downloads"):
+        os.makedirs("downloads")
     asyncio.get_event_loop().run_until_complete(start_server())
     
